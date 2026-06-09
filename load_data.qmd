@@ -29,6 +29,7 @@ all_comments <- bind_rows(env, zer)
 
 # -------------- 
 
+Load Nexis data 
 ```{r}
 library(LexisNexisTools)
 library(atrrr)
@@ -42,7 +43,7 @@ library(textdata)
 
 ```{r}
 pre_files <- list.files(
-  path = here::here("data", "Nexis", "EU-SUP-bans"),   # update to your folder
+  path = here::here("data", "Nexis2", "EU-SUP-bans"), 
   pattern = "\\.docx$",
   full.names = TRUE,
   recursive = TRUE,

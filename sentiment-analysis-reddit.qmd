@@ -11,6 +11,9 @@ library(tidytext)
 library(sentimentr)
 library(remotes)
 library(textdata)
+library(jsonlite)
+library(dplyr)
+library(lubridate)
 ```
 
 
@@ -43,11 +46,16 @@ all_comments <- all_comments %>%
     text_clean = str_replace_all(text_clean, "\u2019", "'"), # normalize all curly ' to R's '
     text_clean = str_remove_all(text_clean, "'s\\b"), # remove possessives
     text_clean = str_remove_all(text_clean, "[0-9]+$"), # remove numbers 
-    text_clean = str_squish(text_clean) # cleans all the added white space 
+    text_clean = str_squish(text_clean), # cleans all the added white space 
+    date = as_datetime(as.numeric(created_utc))
   ) %>%
-  filter(nchar(text_clean) > 10)
+  filter(nchar(text_clean) > 10) %>% 
+  filter(date >= as.Date("2021-07-01")) %>%  # filter for >2021 
+  filter(str_detect(body, regex("EU|european union|SUP directive|single.use plastic directive|brussels", # Filter for ~ EU SUP BAN
+                                ignore_case = TRUE)))
 
 all_comments
+
 ```
 
 Number of articles 
@@ -174,6 +182,28 @@ afinn_scores %>%
   labs(title = "AFINN Scores", 
        x = "Score", 
        y = "Count")
+```
+Create a time series plot that shows bing and affin scores overtime 
+```{r}
+# Make sure date is in Date format
+all_comments <- all_comments %>%
+  mutate(date = as.Date(date))
+
+# Time series plot
+ggplot(all_comments, aes(x = date)) +
+  # Plots 
+  geom_smooth(aes(y = bing_score, color = "Bing"), method = "loess", se = TRUE) +
+  geom_smooth(aes(y = afinn_score, color = "AFINN"), method = "loess", se = TRUE) +
+  # Line
+  geom_vline(xintercept = as.Date("2021-07-03"), linetype = "dashed", color = "red") +
+  annotate("text", x = as.Date("2021-07-03"), y = max(all_comments$afinn_score, na.rm=TRUE), 
+           label = "SUP Directive\nTakes Effect", hjust = -0.1, size = 3, color = "red") +
+  # Style 
+  scale_color_manual(values = c("Bing" = "orange", 
+                                "AFINN" = "darkgreen")) +
+  labs(title = "Media Sentiment Toward EU Single-Use Plastics Policy Over Time",
+       x = "Date", y = "Normalized Sentiment Score", color = "Lexicon") +
+  theme_minimal()
 ```
 
 

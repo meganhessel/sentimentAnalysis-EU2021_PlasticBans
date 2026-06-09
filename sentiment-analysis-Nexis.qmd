@@ -11,13 +11,15 @@ library(tidytext)
 library(sentimentr)
 library(remotes)
 library(textdata)
+library(ggplot2)
+library(lubridate)
 ```
 
 
 ## Data 
 ```{r}
 pre_files <- list.files(
-  path = here::here("data", "Nexis", "EU-SUP-bans"),   # update to your folder
+  path = here::here("data", "Nexis2", "EU-SUP-bans"),   # update to your folder
   pattern = "\\.docx$",
   full.names = TRUE,
   recursive = TRUE,
@@ -113,14 +115,17 @@ bing_lexicon <- get_sentiments("bing")
 bing_scores <- nexis_art %>% 
   # Tokenize posts 
   unnest_tokens(word, text_clean) %>% 
+  # Normalize word count 
+  group_by(id) %>% 
+  mutate(word_count = n()) %>% 
   # Join the words to the sentiment lexicon 
   inner_join(bing_lexicon, by = "word") %>% 
-  count(id, sentiment) %>% 
+  count(id, word_count, sentiment) %>% 
   pivot_wider(names_from = sentiment, 
               values_from = n, 
               values_fill = 0) %>% 
   # Calculate total sentiment score: positives - negative 
-  mutate(score_b = positive - negative) 
+  mutate(score_b = (positive - negative) / word_count) 
 
 # Join scores to posts  
 nexis_art <- nexis_art %>%
@@ -157,9 +162,10 @@ afinn_scores <- nexis_art %>%
   unnest_tokens(word, text_clean) %>% 
   # Inner Join the words to the sentiment lexicon  
   inner_join(afinn, by = "word") %>% 
-  # Score: sum of afinn scores for each URI 
+  # Score: sum of afinn scores for each URI / word count to normalize by article length 
   group_by(id) %>% 
-  summarise(score_af = sum(value), .groups = "drop")
+  mutate(word_count = n()) %>% 
+  summarise(score_af = sum(value) / first(word_count), .groups = "drop")
 
 # Join scores to posts  
 nexis_art <- nexis_art %>% 
@@ -180,6 +186,27 @@ afinn_scores %>%
        x = "Score", 
        y = "Count")
 ```
+Create a time series plot that shows bing and affin scores overtime 
+```{r}
+# Make sure date is in Date format
+nexis_art <- nexis_art %>%
+  mutate(date = as.Date(date))
+
+# Time series plot
+ggplot(nexis_art, aes(x = date)) +
+  geom_smooth(aes(y = bing_score, color = "Bing"), method = "loess", se = TRUE) +
+  geom_smooth(aes(y = afinn_score, color = "AFINN"), method = "loess", se = TRUE) +
+  
+  geom_vline(xintercept = as.Date("2021-07-03"), linetype = "dashed", color = "red") +
+  annotate("text", x = as.Date("2021-07-03"), y = max(nexis_art$afinn_score, na.rm=TRUE), 
+           label = "SUP Directive\nTakes Effect", hjust = -0.1, size = 3, color = "red") +
+  scale_color_manual(values = c("Bing" = "orange", 
+                                "AFINN" = "darkgreen")) +
+  labs(title = "Media Sentiment Toward EU Single-Use Plastics Policy Over Time",
+       x = "Date", y = "Normalized Sentiment Score", color = "Lexicon") +
+  theme_minimal()
+```
+
 
 
 ## NRC lexicon 
