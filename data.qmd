@@ -1,0 +1,68 @@
+---
+title: "data"
+format: html
+---
+
+```{r}
+library(jsonlite)
+library(dplyr)
+library(lubridate)
+```
+
+Load Data 
+Data from: https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4 
+Data is subreddit comments filtered for environmental, zero_waste, and european from 2005-06 to 2024-12. 
+
+
+```{r}
+data_path <- "~/Documents/MEDS/eds231_text_analysis/sentimentAnalysis-EU2021_PlasticBans/data/reddit/subreddits24"
+
+env <- stream_in(file(file.path(data_path, "environment_filtered.ndjson")))
+zer <- stream_in(file(file.path(data_path, "ZeroWaste_filtered.ndjson")))
+eur <- stream_in(file(file.path(data_path, "european_filtered.ndjson")))
+
+all_comments <- bind_rows(env, zer)
+
+```
+
+
+
+# -------------- 
+
+```{r}
+library(LexisNexisTools)
+library(atrrr)
+library(tidyverse)
+library(tidytext)
+library(sentimentr)
+library(remotes)
+library(textdata)
+```
+
+
+```{r}
+pre_files <- list.files(
+  path = here::here("data", "Nexis", "EU-SUP-bans"),   # update to your folder
+  pattern = "\\.docx$",
+  full.names = TRUE,
+  recursive = TRUE,
+  ignore.case = TRUE
+)
+
+pre_dat <- lnt_read(pre_files)
+
+pre_meta_df       <- pre_dat@meta
+pre_articles_df   <- pre_dat@articles
+pre_paragraphs_df <- pre_dat@paragraphs
+
+df <- tibble(
+  date     = pre_meta_df$Date,
+  headline = pre_meta_df$Headline,
+  id       = pre_meta_df$ID,
+  text     = pre_articles_df$Article,
+  source   = pre_meta_df$Newspaper
+)
+
+```
+
+

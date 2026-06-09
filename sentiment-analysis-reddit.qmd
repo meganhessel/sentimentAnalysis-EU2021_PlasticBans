@@ -1,0 +1,348 @@
+---
+title: "sentiment-analysis-Readit"
+format: html
+---
+
+
+```{r}
+library(atrrr)
+library(tidyverse)
+library(tidytext)
+library(sentimentr)
+library(remotes)
+library(textdata)
+```
+
+
+## Data 
+Load Data 
+Data from: https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4 
+Data is subreddit comments filtered for environmental, zero_waste, and european from 2005-06 to 2024-12. 
+
+```{r}
+data_path <- "~/Documents/MEDS/eds231_text_analysis/sentimentAnalysis-EU2021_PlasticBans/data/reddit/subreddits24"
+
+env <- stream_in(file(file.path(data_path, "environment_filtered.ndjson")))
+zer <- stream_in(file(file.path(data_path, "ZeroWaste_filtered.ndjson")))
+eur <- stream_in(file(file.path(data_path, "european_filtered.ndjson")))
+
+all_comments <- bind_rows(env, zer)
+```
+
+
+# Clean and Prepare Text 
+```{r}
+# filter for neccessary columns 
+all_comments <- all_comments[,1:17]
+
+all_comments <- all_comments %>%
+  mutate(
+    #date  = as.Date(date),
+    text_clean = str_remove_all(body, "https?\\S+"), # remove URLs
+    text_clean = str_remove_all(text_clean, "@\\S+"),# remove mentions
+    text_clean = str_replace_all(text_clean, "\u2019", "'"), # normalize all curly ' to R's '
+    text_clean = str_remove_all(text_clean, "'s\\b"), # remove possessives
+    text_clean = str_remove_all(text_clean, "[0-9]+$"), # remove numbers 
+    text_clean = str_squish(text_clean) # cleans all the added white space 
+  ) %>%
+  filter(nchar(text_clean) > 10)
+
+all_comments
+```
+
+Number of articles 
+```{r}
+nrow(all_comments)
+```
+
+# Word Frequency 
+
+Remove Stop words 
+```{r}
+# Standard stop words
+data("stop_words")
+
+tokens_clean <- all_comments |>
+  unnest_tokens(word, text_clean) |>
+  anti_join(stop_words, by = "word")
+
+# Custom stop words 
+custom_sw <- tibble(word = c(
+  # search terms
+  "fig", "says", "vol"
+))
+
+tokens_clean2 <- tokens_clean %>%
+  anti_join(custom_sw, by = "word")
+
+```
+
+Look at the post frequent words 
+```{r}
+word_counts <- tokens_clean2 %>% 
+  count(word, sort = TRUE)
+
+word_counts %>%
+  slice_max(n, n =20) %>% 
+  ggplot(aes(x = reorder(word, n), y = n)) + 
+  geom_col(fill = "#6c91c9") + 
+  coord_flip() + 
+  labs(
+    title = "Top 20 words in Readit posts about SUPs", 
+    x = "Words", 
+    y = "count") + 
+  theme_minimal()
+```
+
+# Sentiment Analysis 
+
+## Bing Lexicon 
+
+The Bing lexicon is a polarity / binary lexicon grouping where yes/no = positive/negative on a word-level. It is a list of words and their positive or negative sentiments.
+
+```{r}
+# Load lexicon 
+bing_lexicon <- get_sentiments("bing")
+
+# Score posts with Bing
+bing_scores <- all_comments %>% 
+  # Tokenize posts 
+  unnest_tokens(word, text_clean) %>% 
+  # Join the words to the sentiment lexicon 
+  inner_join(bing_lexicon, by = "word") %>% 
+  count(id, sentiment) %>% 
+  pivot_wider(names_from = sentiment, 
+              values_from = n, 
+              values_fill = 0) %>% 
+  # Calculate total sentiment score: positives - negative 
+  mutate(score_b = positive - negative) 
+
+# Join scores to posts  
+all_comments <- all_comments %>%
+  left_join(bing_scores, "id") %>% 
+  mutate(bing_score = replace_na(score_b, 0)) %>%  # NA scores = 0 
+  select(-c(score_b))
+
+# Check if it joined the score column 
+colnames(all_comments)
+
+```
+
+Graph 
+```{r}
+bing_scores %>% 
+  ggplot() + 
+  geom_histogram(aes(score_b), fill = "orange") + 
+  geom_vline(aes(xintercept = 0)) + 
+  theme_light() + 
+  labs(title = "Bing Scores", 
+       x = "Score", 
+       y = "Count")
+```
+
+
+## AFINN Lexicon 
+```{r}
+# Load AFINN 
+afinn <- get_sentiments("afinn")
+
+# Score text
+afinn_scores <- all_comments %>%
+  # Tokenize posts 
+  unnest_tokens(word, text_clean) %>% 
+  # Inner Join the words to the sentiment lexicon  
+  inner_join(afinn, by = "word") %>% 
+  # Score: sum of afinn scores for each URI 
+  group_by(id) %>% 
+  summarise(score_af = sum(value), .groups = "drop")
+
+# Join scores to posts  
+all_comments <- all_comments %>% 
+  left_join(afinn_scores, "id") %>% 
+  mutate(afinn_score = replace_na(score_af, 0)) %>% # NA scores = 0 
+  select(-c(score_af))
+
+```
+
+Graph 
+```{r}
+afinn_scores %>% 
+  ggplot() + 
+  geom_histogram(aes(score_af), fill = "#69b269") + 
+  geom_vline(aes(xintercept = 0)) + 
+  theme_light() + 
+  labs(title = "AFINN Scores", 
+       x = "Score", 
+       y = "Count")
+```
+
+
+## NRC lexicon 
+```{r}
+# Load NRC 
+nrc <- get_sentiments("nrc")
+
+# Score text - Count emotion words per post
+nrc_scores <- all_comments %>% 
+  # Tokenized posts 
+  unnest_tokens(word, text_clean) %>% 
+  # Join to NRC 
+  inner_join(nrc, by = "word", relationship = "many-to-many") %>% 
+  # Count emotion words per post 
+  group_by(id, sentiment) %>% 
+  summarise(nrc_count = n(), .groups = "drop") 
+
+#Join to post
+all_comments <- all_comments %>%
+  left_join(nrc_scores, by = "id") %>% 
+  rename(nrc_sentiment_words = sentiment)
+```
+
+Graphs 
+```{r}
+# ----- Top emotions in corpus ----- 
+nrc_scores %>%
+  group_by(sentiment) %>%
+  summarise(nrc_count = sum(nrc_count), .groups = 'drop') %>%
+  ggplot() +
+  geom_col(aes(y = reorder(sentiment, nrc_count), x = nrc_count), 
+           fill = "#458cb2") +
+  theme_light() +
+  labs(title = "Emotion Words in NRC Search", x = "Count", y = "Sentiment Words")
+
+# ----- What words are driving each emotion? ----- 
+# Find frequency of words for each sentiment 
+sentiment_word_count <- all_comments %>% 
+  unnest_tokens(word, text_clean) %>% # Tokenized posts
+  inner_join(nrc, by = "word", relationship = "many-to-many") %>% # Join to NRC 
+  count(sentiment, word, sort = TRUE)  # Count of words per sentiment 
+
+# Get the top 10 most frequent words for each sentiment group 
+top_10 <- sentiment_word_count %>% 
+  group_by(sentiment) %>% 
+  slice_max(order_by = n, n = 10, with_ties = FALSE) %>%
+  ungroup()
+
+# Plot the top 10 words for each sentiment group 
+ggplot(top_10, aes(x = reorder_within(word, n, sentiment), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_reordered() +  # Keeps ordering within facets
+  facet_wrap(~ sentiment, scales = "free_y") +
+  labs(
+    title = "Top 10 Words per Sentiment Group",
+    x = "Word",
+    y = "Frequency"
+  ) +
+  coord_flip() + 
+  theme_minimal()
+
+```
+
+## sentimentr
+
+```{r}
+sr_scores <- sentiment_by(all_comments$text_clean) %>%
+  select(element_id, ave_sentiment) %>%
+  rename(sr_score = ave_sentiment) %>%
+  mutate(element_id = as.integer(element_id))
+
+# Join sr score back into posts by row index 
+all_comments <- all_comments %>%
+  mutate(element_id = row_number()) %>%
+  left_join(sr_scores, by = "element_id") %>% 
+  select(-c(element_id))
+```
+
+```{r}
+sr_scores %>% 
+  ggplot() + 
+  geom_histogram(aes(sr_score), fill = "#c14545") + 
+  geom_vline(aes(xintercept = 0)) + 
+  theme_light() + 
+  labs(title = "Sentimentr Scores", 
+       x = "Score", 
+       y = "Count")
+
+sr_scores
+```
+
+## VADER 
+
+```{r}
+all_comments <- all_comments %>% 
+  mutate(vader_score = purrr::map_dbl(text_clean, ~ tidyvader::vader_chr(.x)$compound))
+```
+
+```{r}
+# purple
+all_comments %>% 
+  group_by(id) %>% 
+  summarise(vader_score = mean(vader_score)) %>% 
+  ggplot() + 
+  geom_histogram(aes(vader_score), fill = "#954aa5") +
+  geom_vline(aes(xintercept = 0)) + 
+  labs(
+    title = "VADER score", 
+    x = "Score", 
+    y = "Count") +
+  theme_light()
+```
+
+##  Compare 
+
+**Correlation**
+```{r}
+all_comments %>% 
+  select(bing_score, afinn_score, sr_score, vader_score) %>% # Select 4 scores 
+  cor(use = "complete.obs") 
+```
+**Score distributions**
+```{r}
+all_comments %>% 
+  pivot_longer(cols = c(bing_score, afinn_score, sr_score, vader_score), 
+               names_to = "method", 
+               values_to = "scores") %>% 
+  ggplot() + 
+  geom_histogram(aes(scores, fill = method), show.legend = FALSE) + 
+  facet_wrap(~method) + 
+  theme_bw()
+```
+**Misclassifications**
+```{r}
+all_comments %>% 
+  select(c(text_clean, bing_score, vader_score)) %>% 
+  # New column with score signs 
+  mutate(bing_flag = sign(bing_score),
+         #afinn_flag = sign(afinn_score),
+         #sr_flag = sign(sr_score),
+         vadar_flag = sign(vader_score)
+         ) %>% 
+  # Filter for posts where two methods point in opposite directions 
+  # Picking bing and VADAR 
+  filter((bing_flag == -1 & vadar_flag == 1) | 
+         (bing_flag == 1 & vadar_flag == -1))
+
+
+
+all_comments %>% 
+  # Text per row and keep only neccessary columns  
+  select(c(text_clean, bing_score, vader_score)) %>% 
+  group_by(text_clean) %>% 
+  summarise(bing_score = mean(bing_score), 
+            vader_score = mean(vader_score)) %>% 
+  # New column with score signs 
+  mutate(bing_flag = sign(bing_score),
+         #afinn_flag = sign(afinn_score),
+         #sr_flag = sign(sr_score),
+         vadar_flag = sign(vader_score)
+         ) %>% 
+  # Filter for posts where two methods point in opposite directions 
+  # Picking bing and VADAR 
+  filter((bing_flag == -1 & vadar_flag == 1) | 
+         (bing_flag == 1 & vadar_flag == -1)) %>% 
+  # Compute the absolute difference between the two scores 
+  mutate(abs_difference = abs(bing_score) - abs(vader_score)) %>% 
+  # Arrange for highest-conflict first 
+  arrange(desc(abs_difference))
+```
+
