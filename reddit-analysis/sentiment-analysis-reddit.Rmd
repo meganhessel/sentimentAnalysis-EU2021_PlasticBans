@@ -1,9 +1,11 @@
 ---
 title: "sentiment-analysis-Nexis"
 output: html_document
+author: "Megan Hessel"
 ---
 
-Load libraries 
+Load libraries
+
 ```{r}
 library(atrrr)
 library(tidyverse)
@@ -16,11 +18,9 @@ library(dplyr)
 library(lubridate)
 ```
 
+## Data
 
-## Data 
-Load Data 
-Data from: https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4 
-Data is subreddit comments filtered for environmental, zero_waste, and european from 2005-06 to 2024-12. 
+Load Data Data from: <https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4> Data is subreddit comments filtered for environmental, zero_waste, and european from 2005-06 to 2024-12.
 
 ```{r}
 data_path <- "~/Documents/MEDS/eds231_text_analysis/sentimentAnalysis-EU2021_PlasticBans/data/reddit/subreddits24"
@@ -32,8 +32,8 @@ eur <- stream_in(file(file.path(data_path, "european_filtered.ndjson")))
 all_comments <- bind_rows(env, zer)
 ```
 
+# Clean and Prepare Text
 
-# Clean and Prepare Text 
 ```{r}
 # filter for neccessary columns 
 all_comments <- all_comments[,1:17]
@@ -59,14 +59,16 @@ all_comments
 
 ```
 
-Number of articles 
+Number of articles
+
 ```{r}
 nrow(all_comments)
 ```
 
-# Word Frequency 
+# Word Frequency
 
-Remove Stop words 
+Remove Stop words
+
 ```{r}
 # Standard stop words
 data("stop_words")
@@ -86,7 +88,8 @@ tokens_clean2 <- tokens_clean %>%
 
 ```
 
-Look at the post frequent words 
+Look at the post frequent words
+
 ```{r}
 word_counts <- tokens_clean2 %>% 
   count(word, sort = TRUE)
@@ -104,9 +107,13 @@ word_counts %>%
   theme_minimal()
 ```
 
-# Sentiment Analysis 
+This corpus looks much more like genuine public discourse than the Nexis articles. Words like "people", "bags", "buy", "reusable", "straws" are showing consumer-level language. Words like "ban", "change", "recycling" are showing policy engagement from a public perspective. Unlike Nexis there is no industry jargon like "biodegradable" or "commission" dominating This is a better corpus for measuring public sentiment.
 
-## Bing Lexicon 
+No industry jargon dominating - a better corpus for measuring public setiment.
+
+# Sentiment Analysis
+
+## Bing Lexicon
 
 The Bing lexicon is a polarity / binary lexicon grouping where yes/no = positive/negative on a word-level. It is a list of words and their positive or negative sentiments. Pure dictionary lookups. Looking word-by-word assigning each word a **binary** positive (+1) or negative (-1) score.
 
@@ -138,7 +145,8 @@ colnames(all_comments)
 
 ```
 
-Graph 
+Graph
+
 ```{r}
 bing_scores %>% 
   ggplot() + 
@@ -150,10 +158,10 @@ bing_scores %>%
        y = "Count")
 ```
 
-
-## AFINN Lexicon 
+## AFINN Lexicon
 
 Pure dictionary lookups.Looking word-by-word assigning each word an **integer score** ranging +5 to -5.
+
 ```{r}
 # Load AFINN 
 afinn <- get_sentiments("afinn")
@@ -176,7 +184,8 @@ all_comments <- all_comments %>%
 
 ```
 
-Graph 
+Graph
+
 ```{r}
 afinn_scores %>% 
   ggplot() + 
@@ -188,7 +197,8 @@ afinn_scores %>%
        y = "Count")
 ```
 
-Create a time series plot that shows bing and affin scores overtime 
+Create a time series plot that shows bing and affin scores overtime
+
 ```{r}
 # Make sure date is in Date format
 all_comments <- all_comments %>%
@@ -211,10 +221,14 @@ ggplot(all_comments, aes(x = date)) +
   theme_minimal()
 ```
 
+DISCUSSION:
 
-## NRC lexicon 
+Bing and AFINN are showing near-zero center which suggests mostly neutral public sentiment.
+
+## NRC lexicon
 
 Pure dictionary lookups. Looking word-by-word assigning each word into one of the **10 categorical emotions.**
+
 ```{r}
 # Load NRC 
 nrc <- get_sentiments("nrc")
@@ -235,7 +249,8 @@ all_comments <- all_comments %>%
   rename(nrc_sentiment_words = sentiment)
 ```
 
-Graphs 
+Graphs
+
 ```{r}
 # ----- Top emotions in corpus ----- 
 nrc_scores %>%
@@ -275,6 +290,14 @@ ggplot(top_10, aes(x = reorder_within(word, n, sentiment), y = n, fill = sentime
 
 ```
 
+DICUSSION:
+
+Compared to Nexis NRC, the gap between positive and negative is more narrow which might equate to more divide among the public.
+
+The fear grouping contains "change", "government", "disabled", "medical" which might suggest concern about practical implications of bans and the role of the government.
+
+The negative words are full of "waste", "trash", "garbage" that, in this case, are NOT actual expressions of disgusts, contaminating the results.
+
 ## sentimentr
 
 **Sentence level** scores. Factors in negation & amplifiers Looking at a cluster of words around a polarized word, assigning the clusters positive and negative scores.
@@ -293,7 +316,8 @@ all_comments <- all_comments %>%
   select(-c(element_id))
 ```
 
-Graph 
+Graph
+
 ```{r}
 sr_scores %>% 
   ggplot() + 
@@ -307,15 +331,19 @@ sr_scores %>%
 sr_scores
 ```
 
-## VADER 
+DICUSSION" Similar to Bing and AFINN results. Sentimentr shows near-zero center with a slight positive lean suggesting mostly neutral public sentiment.
+
+## VADER
 
 Sentence level compound scores [-1, +1]. Factors in capitalization, functions, slang, and emojis. Good for short social media text
+
 ```{r}
 all_comments <- all_comments %>% 
   mutate(vader_score = purrr::map_dbl(text_clean, ~ tidyvader::vader_chr(.x)$compound))
 ```
 
-Graph 
+Graph
+
 ```{r}
 # plot 
 all_comments %>% 
@@ -331,16 +359,23 @@ all_comments %>%
   theme_light()
 ```
 
-##  Compare 
+DICUSSION: The slight lean toward the positive side aligns with sentimentr. The spike at 0 is neutral posts where people stating facts without sentiment ("single use plastics were banned in the EU").
+
+## Compare
 
 **Correlation**
+
 ```{r}
 # Find correlation between tests 
 all_comments %>% 
   select(bing_score, afinn_score, sr_score, vader_score) %>% # Select 4 scores 
   cor(use = "complete.obs") 
 ```
+
+AFINN and Bing scores are very similar, following by AFINN and VADER.
+
 **Score distributions**
+
 ```{r}
 # Plot  score distribution per test 
 all_comments %>% 
@@ -354,6 +389,7 @@ all_comments %>%
 ```
 
 **Misclassifications**
+
 ```{r}
 all_comments %>% 
   select(c(text_clean, bing_score, vader_score)) %>% 
@@ -391,4 +427,3 @@ all_comments %>%
   # Arrange for highest-conflict first 
   arrange(desc(abs_difference))
 ```
-
