@@ -1,72 +1,67 @@
 ---
-title: "sentiment-analysis"
-format: html
+title: "sentiment-analysis-Nexis"
+output: html_document
 ---
 
 Load libraries 
 ```{r}
-library(LexisNexisTools)
 library(atrrr)
 library(tidyverse)
 library(tidytext)
 library(sentimentr)
 library(remotes)
 library(textdata)
-library(ggplot2)
+library(jsonlite)
+library(dplyr)
 library(lubridate)
 ```
 
 
 ## Data 
-News articles were retrieved from Nexis Uni using the following search terms: single-use plastic, SUP directive, EU plastic ban, single use plastics directive. Time range was set for July 2021- July 2024. 
-Articles were downloaded as .docx files and parsed using the LexisNexisTools R package.
+Load Data 
+Data from: https://academictorrents.com/details/1614740ac8c94505e4ecb9d88be8bed7b6afddd4 
+Data is subreddit comments filtered for environmental, zero_waste, and european from 2005-06 to 2024-12. 
 
-Load the data.
 ```{r}
-pre_files <- list.files(
-  path = here::here("data", "Nexis2", "EU-SUP-bans"),   # update to your folder
-  pattern = "\\.docx$",
-  full.names = TRUE,
-  recursive = TRUE,
-  ignore.case = TRUE
-)
+data_path <- "~/Documents/MEDS/eds231_text_analysis/sentimentAnalysis-EU2021_PlasticBans/data/reddit/subreddits24"
 
-pre_dat <- lnt_read(pre_files)
+env <- stream_in(file(file.path(data_path, "environment_filtered.ndjson")))
+zer <- stream_in(file(file.path(data_path, "ZeroWaste_filtered.ndjson")))
+eur <- stream_in(file(file.path(data_path, "european_filtered.ndjson")))
 
-pre_meta_df       <- pre_dat@meta
-pre_articles_df   <- pre_dat@articles
-pre_paragraphs_df <- pre_dat@paragraphs
-
-df <- tibble(
-  date     = pre_meta_df$Date,
-  headline = pre_meta_df$Headline,
-  id       = pre_meta_df$ID,
-  text     = pre_articles_df$Article,
-  source   = pre_meta_df$Newspaper
-)
+all_comments <- bind_rows(env, zer)
 ```
 
 
 # Clean and Prepare Text 
 ```{r}
-nexis_art <- df %>%
+# filter for neccessary columns 
+all_comments <- all_comments[,1:17]
+
+all_comments <- all_comments %>%
   mutate(
-    # As data 
-    date  = as.Date(date),
     # Clean text 
-    text_clean = str_remove_all(text, "https?\\S+"), # remove URLs
+    text_clean = str_remove_all(body, "https?\\S+"), # remove URLs
     text_clean = str_remove_all(text_clean, "@\\S+"),# remove mentions
     text_clean = str_replace_all(text_clean, "\u2019", "'"), # normalize all curly ' to R's '
     text_clean = str_remove_all(text_clean, "'s\\b"), # remove possessives
     text_clean = str_remove_all(text_clean, "[0-9]+$"), # remove numbers 
-    text_clean = str_squish(text_clean) # cleans all the added white space 
+    text_clean = str_squish(text_clean), # cleans all the added white space 
+    # Make date 
+    date = as_datetime(as.numeric(created_utc))
   ) %>%
-  filter(nchar(text_clean) > 10)
+  filter(nchar(text_clean) > 10) %>% 
+  filter(date >= as.Date("2021-07-01")) %>%  # filter for >2021 
+  filter(str_detect(body, regex("EU|european union|SUP directive|single.use plastic directive|brussels", # Filter for ~ EU SUP BAN
+                                ignore_case = TRUE)))
+
+all_comments
+
 ```
 
 Number of articles 
 ```{r}
-nrow(nexis_art)
+nrow(all_comments)
 ```
 
 # Word Frequency 
@@ -76,7 +71,7 @@ Remove Stop words
 # Standard stop words
 data("stop_words")
 
-tokens_clean <- nexis_art |>
+tokens_clean <- all_comments |>
   unnest_tokens(word, text_clean) |>
   anti_join(stop_words, by = "word")
 
@@ -96,16 +91,16 @@ Look at the post frequent words
 word_counts <- tokens_clean2 %>% 
   count(word, sort = TRUE)
 
-# plot 
+# Plot 
 word_counts %>%
   slice_max(n, n =20) %>% 
   ggplot(aes(x = reorder(word, n), y = n)) + 
   geom_col(fill = "#6c91c9") + 
   coord_flip() + 
   labs(
-    title = "Top 20 words in Nexis Uni articles about the EU SUP Bans", 
+    title = "Top 20 words in Readit posts about SUPs", 
     x = "Words", 
-    y = "Count") + 
+    y = "count") + 
   theme_minimal()
 ```
 
@@ -120,29 +115,26 @@ The Bing lexicon is a polarity / binary lexicon grouping where yes/no = positive
 bing_lexicon <- get_sentiments("bing")
 
 # Score posts with Bing
-bing_scores <- nexis_art %>% 
+bing_scores <- all_comments %>% 
   # Tokenize posts 
   unnest_tokens(word, text_clean) %>% 
-  # Normalize word count 
-  group_by(id) %>% 
-  mutate(word_count = n()) %>% 
   # Join the words to the sentiment lexicon 
   inner_join(bing_lexicon, by = "word") %>% 
-  count(id, word_count, sentiment) %>% 
+  count(id, sentiment) %>% 
   pivot_wider(names_from = sentiment, 
               values_from = n, 
               values_fill = 0) %>% 
   # Calculate total sentiment score: positives - negative 
-  mutate(score_b = (positive - negative) / word_count) 
+  mutate(score_b = positive - negative) 
 
 # Join scores to posts  
-nexis_art <- nexis_art %>%
+all_comments <- all_comments %>%
   left_join(bing_scores, "id") %>% 
   mutate(bing_score = replace_na(score_b, 0)) %>%  # NA scores = 0 
   select(-c(score_b))
 
 # Check if it joined the score column 
-colnames(nexis_art)
+colnames(all_comments)
 
 ```
 
@@ -160,23 +152,24 @@ bing_scores %>%
 
 
 ## AFINN Lexicon 
+
+Pure dictionary lookups.Looking word-by-word assigning each word an **integer score** ranging +5 to -5.
 ```{r}
 # Load AFINN 
 afinn <- get_sentiments("afinn")
 
 # Score text
-afinn_scores <- nexis_art %>%
+afinn_scores <- all_comments %>%
   # Tokenize posts 
   unnest_tokens(word, text_clean) %>% 
   # Inner Join the words to the sentiment lexicon  
   inner_join(afinn, by = "word") %>% 
-  # Score: sum of afinn scores for each URI / word count to normalize by article length 
+  # Score: sum of afinn scores for each URI 
   group_by(id) %>% 
-  mutate(word_count = n()) %>% 
-  summarise(score_af = sum(value) / first(word_count), .groups = "drop")
+  summarise(score_af = sum(value), .groups = "drop")
 
 # Join scores to posts  
-nexis_art <- nexis_art %>% 
+all_comments <- all_comments %>% 
   left_join(afinn_scores, "id") %>% 
   mutate(afinn_score = replace_na(score_af, 0)) %>% # NA scores = 0 
   select(-c(score_af))
@@ -194,20 +187,23 @@ afinn_scores %>%
        x = "Score", 
        y = "Count")
 ```
+
 Create a time series plot that shows bing and affin scores overtime 
 ```{r}
 # Make sure date is in Date format
-nexis_art <- nexis_art %>%
+all_comments <- all_comments %>%
   mutate(date = as.Date(date))
 
 # Time series plot
-ggplot(nexis_art, aes(x = date)) +
+ggplot(all_comments, aes(x = date)) +
+  # Plots 
   geom_smooth(aes(y = bing_score, color = "Bing"), method = "loess", se = TRUE) +
   geom_smooth(aes(y = afinn_score, color = "AFINN"), method = "loess", se = TRUE) +
-  
+  # Line
   geom_vline(xintercept = as.Date("2021-07-03"), linetype = "dashed", color = "red") +
-  annotate("text", x = as.Date("2021-07-03"), y = max(nexis_art$afinn_score, na.rm=TRUE), 
+  annotate("text", x = as.Date("2021-07-03"), y = max(all_comments$afinn_score, na.rm=TRUE), 
            label = "SUP Directive\nTakes Effect", hjust = -0.1, size = 3, color = "red") +
+  # Style 
   scale_color_manual(values = c("Bing" = "orange", 
                                 "AFINN" = "darkgreen")) +
   labs(title = "Media Sentiment Toward EU Single-Use Plastics Policy Over Time",
@@ -216,14 +212,15 @@ ggplot(nexis_art, aes(x = date)) +
 ```
 
 
-
 ## NRC lexicon 
+
+Pure dictionary lookups. Looking word-by-word assigning each word into one of the **10 categorical emotions.**
 ```{r}
 # Load NRC 
 nrc <- get_sentiments("nrc")
 
 # Score text - Count emotion words per post
-nrc_scores <- nexis_art %>% 
+nrc_scores <- all_comments %>% 
   # Tokenized posts 
   unnest_tokens(word, text_clean) %>% 
   # Join to NRC 
@@ -233,7 +230,7 @@ nrc_scores <- nexis_art %>%
   summarise(nrc_count = n(), .groups = "drop") 
 
 #Join to post
-nexis_art <- nexis_art %>%
+all_comments <- all_comments %>%
   left_join(nrc_scores, by = "id") %>% 
   rename(nrc_sentiment_words = sentiment)
 ```
@@ -252,7 +249,7 @@ nrc_scores %>%
 
 # ----- What words are driving each emotion? ----- 
 # Find frequency of words for each sentiment 
-sentiment_word_count <- nexis_art %>% 
+sentiment_word_count <- all_comments %>% 
   unnest_tokens(word, text_clean) %>% # Tokenized posts
   inner_join(nrc, by = "word", relationship = "many-to-many") %>% # Join to NRC 
   count(sentiment, word, sort = TRUE)  # Count of words per sentiment 
@@ -280,19 +277,23 @@ ggplot(top_10, aes(x = reorder_within(word, n, sentiment), y = n, fill = sentime
 
 ## sentimentr
 
+**Sentence level** scores. Factors in negation & amplifiers Looking at a cluster of words around a polarized word, assigning the clusters positive and negative scores.
+
 ```{r}
-sr_scores <- sentiment_by(nexis_art$text_clean) %>%
+# Add sentiment scores pre window 
+sr_scores <- sentiment_by(all_comments$text_clean) %>%
   select(element_id, ave_sentiment) %>%
   rename(sr_score = ave_sentiment) %>%
   mutate(element_id = as.integer(element_id))
 
 # Join sr score back into posts by row index 
-nexis_art <- nexis_art %>%
+all_comments <- all_comments %>%
   mutate(element_id = row_number()) %>%
   left_join(sr_scores, by = "element_id") %>% 
   select(-c(element_id))
 ```
 
+Graph 
 ```{r}
 sr_scores %>% 
   ggplot() + 
@@ -308,14 +309,16 @@ sr_scores
 
 ## VADER 
 
+Sentence level compound scores [-1, +1]. Factors in capitalization, functions, slang, and emojis. Good for short social media text
 ```{r}
-nexis_art <- nexis_art %>% 
+all_comments <- all_comments %>% 
   mutate(vader_score = purrr::map_dbl(text_clean, ~ tidyvader::vader_chr(.x)$compound))
 ```
 
+Graph 
 ```{r}
-# purple
-nexis_art %>% 
+# plot 
+all_comments %>% 
   group_by(id) %>% 
   summarise(vader_score = mean(vader_score)) %>% 
   ggplot() + 
@@ -332,13 +335,15 @@ nexis_art %>%
 
 **Correlation**
 ```{r}
-nexis_art %>% 
+# Find correlation between tests 
+all_comments %>% 
   select(bing_score, afinn_score, sr_score, vader_score) %>% # Select 4 scores 
   cor(use = "complete.obs") 
 ```
 **Score distributions**
 ```{r}
-nexis_art %>% 
+# Plot  score distribution per test 
+all_comments %>% 
   pivot_longer(cols = c(bing_score, afinn_score, sr_score, vader_score), 
                names_to = "method", 
                values_to = "scores") %>% 
@@ -347,9 +352,10 @@ nexis_art %>%
   facet_wrap(~method) + 
   theme_bw()
 ```
+
 **Misclassifications**
 ```{r}
-nexis_art %>% 
+all_comments %>% 
   select(c(text_clean, bing_score, vader_score)) %>% 
   # New column with score signs 
   mutate(bing_flag = sign(bing_score),
@@ -364,7 +370,7 @@ nexis_art %>%
 
 
 
-nexis_art %>% 
+all_comments %>% 
   # Text per row and keep only neccessary columns  
   select(c(text_clean, bing_score, vader_score)) %>% 
   group_by(text_clean) %>% 

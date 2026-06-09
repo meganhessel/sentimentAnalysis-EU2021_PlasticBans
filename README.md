@@ -72,7 +72,7 @@ overhead.
     └── topic-analysis-reddit.qmd
 ```
 
-## References 
+## References
 
 European Commission. (n.d.). Single-use plastics.
 <https://environment.ec.europa.eu/topics/plastics/single-use-plastics_en>

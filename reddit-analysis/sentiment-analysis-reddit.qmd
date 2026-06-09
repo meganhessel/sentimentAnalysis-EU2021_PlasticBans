@@ -3,7 +3,7 @@ title: "sentiment-analysis-Readit"
 format: html
 ---
 
-
+Load libraries 
 ```{r}
 library(atrrr)
 library(tidyverse)
@@ -40,13 +40,14 @@ all_comments <- all_comments[,1:17]
 
 all_comments <- all_comments %>%
   mutate(
-    #date  = as.Date(date),
+    # Clean text 
     text_clean = str_remove_all(body, "https?\\S+"), # remove URLs
     text_clean = str_remove_all(text_clean, "@\\S+"),# remove mentions
     text_clean = str_replace_all(text_clean, "\u2019", "'"), # normalize all curly ' to R's '
     text_clean = str_remove_all(text_clean, "'s\\b"), # remove possessives
     text_clean = str_remove_all(text_clean, "[0-9]+$"), # remove numbers 
     text_clean = str_squish(text_clean), # cleans all the added white space 
+    # Make date 
     date = as_datetime(as.numeric(created_utc))
   ) %>%
   filter(nchar(text_clean) > 10) %>% 
@@ -90,6 +91,7 @@ Look at the post frequent words
 word_counts <- tokens_clean2 %>% 
   count(word, sort = TRUE)
 
+# Plot 
 word_counts %>%
   slice_max(n, n =20) %>% 
   ggplot(aes(x = reorder(word, n), y = n)) + 
@@ -106,7 +108,7 @@ word_counts %>%
 
 ## Bing Lexicon 
 
-The Bing lexicon is a polarity / binary lexicon grouping where yes/no = positive/negative on a word-level. It is a list of words and their positive or negative sentiments.
+The Bing lexicon is a polarity / binary lexicon grouping where yes/no = positive/negative on a word-level. It is a list of words and their positive or negative sentiments. Pure dictionary lookups. Looking word-by-word assigning each word a **binary** positive (+1) or negative (-1) score.
 
 ```{r}
 # Load lexicon 
@@ -150,6 +152,8 @@ bing_scores %>%
 
 
 ## AFINN Lexicon 
+
+Pure dictionary lookups.Looking word-by-word assigning each word an **integer score** ranging +5 to -5.
 ```{r}
 # Load AFINN 
 afinn <- get_sentiments("afinn")
@@ -183,6 +187,7 @@ afinn_scores %>%
        x = "Score", 
        y = "Count")
 ```
+
 Create a time series plot that shows bing and affin scores overtime 
 ```{r}
 # Make sure date is in Date format
@@ -208,6 +213,8 @@ ggplot(all_comments, aes(x = date)) +
 
 
 ## NRC lexicon 
+
+Pure dictionary lookups. Looking word-by-word assigning each word into one of the **10 categorical emotions.**
 ```{r}
 # Load NRC 
 nrc <- get_sentiments("nrc")
@@ -270,7 +277,10 @@ ggplot(top_10, aes(x = reorder_within(word, n, sentiment), y = n, fill = sentime
 
 ## sentimentr
 
+**Sentence level** scores. Factors in negation & amplifiers Looking at a cluster of words around a polarized word, assigning the clusters positive and negative scores.
+
 ```{r}
+# Add sentiment scores pre window 
 sr_scores <- sentiment_by(all_comments$text_clean) %>%
   select(element_id, ave_sentiment) %>%
   rename(sr_score = ave_sentiment) %>%
@@ -283,6 +293,7 @@ all_comments <- all_comments %>%
   select(-c(element_id))
 ```
 
+Graph 
 ```{r}
 sr_scores %>% 
   ggplot() + 
@@ -298,13 +309,15 @@ sr_scores
 
 ## VADER 
 
+Sentence level compound scores [-1, +1]. Factors in capitalization, functions, slang, and emojis. Good for short social media text
 ```{r}
 all_comments <- all_comments %>% 
   mutate(vader_score = purrr::map_dbl(text_clean, ~ tidyvader::vader_chr(.x)$compound))
 ```
 
+Graph 
 ```{r}
-# purple
+# plot 
 all_comments %>% 
   group_by(id) %>% 
   summarise(vader_score = mean(vader_score)) %>% 
@@ -322,12 +335,14 @@ all_comments %>%
 
 **Correlation**
 ```{r}
+# Find correlation between tests 
 all_comments %>% 
   select(bing_score, afinn_score, sr_score, vader_score) %>% # Select 4 scores 
   cor(use = "complete.obs") 
 ```
 **Score distributions**
 ```{r}
+# Plot  score distribution per test 
 all_comments %>% 
   pivot_longer(cols = c(bing_score, afinn_score, sr_score, vader_score), 
                names_to = "method", 
@@ -337,6 +352,7 @@ all_comments %>%
   facet_wrap(~method) + 
   theme_bw()
 ```
+
 **Misclassifications**
 ```{r}
 all_comments %>% 
